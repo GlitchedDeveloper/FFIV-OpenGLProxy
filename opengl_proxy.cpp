@@ -29,6 +29,13 @@
 #include <cstdint>
 #include <cstdlib>
 #include <ctime>
+#include "dep/md5.h"
+#include <unordered_map>
+
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#define STB_IMAGE_IMPLEMENTATION
+#include "dep/stb_image.h"
+#include "dep/stb_image_write.h"
 
 // We are not including 'WinGDI.h' and 'gl.h', so the
 // required types must be redefined in this source file.
@@ -112,7 +119,7 @@ static std::string getTimeString()
 
 static std::ofstream & getLogStream()
 {
-    static std::ofstream theLog("opengl_proxy.log");
+    static std::ofstream theLog("opengl32.log");
     return theLog;
 }
 
@@ -406,6 +413,84 @@ static AutoReport g_AutoReport;
 } // namespace GLProxy {}
 
 // ========================================================
+// Configuration:
+// ========================================================
+std::unordered_map<std::string, std::string> config = {
+    {"DumpTextures", "New"},
+    {"OverrideTextures", "True"},
+    {"MinifiedFilter", "Linear"},
+    {"MagnifiedFilter", "Linear"},
+    {"ForceHandleTransparency", "True"},
+    {"DisableMultisample", "True"}
+};
+
+void WriteConfig() {
+    std::ofstream file("opengl32.ini");
+    if (!file) {
+        std::cerr << "Failed to write config file!" << std::endl;
+        return;
+    }
+    file << "[Textures]\n";
+    file << "; DumpTextures controls which textures are dumped to TexDumps:\n";
+    file << "; None - No textures are dumped\n";
+    file << "; New  - Only textures not found in TexOverrides are saved\n";
+    file << "; All  - All textures are dumped\n";
+    file << "DumpTextures = " << config["DumpTextures"] << "\n\n";
+
+    file << "; OverrideTextures controls which textures are dumped to TexOverrides:\n";
+    file << "; True  - Textures are overridden\n";
+    file << "; False - Textures are not overridden\n";
+    file << "OverrideTextures = " << config["OverrideTextures"] << "\n\n";
+
+    file << "[Rendering]\n";
+    file << "; MinifiedFilter sets the texture filtering mode when a texture is scaled down:\n";
+    file << "; Default - Doesn't override filter\n";
+    file << "; Nearest - Uses nearest-neighbor filtering (can look pixelated)\n";
+    file << "; Linear  - Uses bilinear filtering (smooths textures, but causes minimal texture bleeding)\n";
+    file << "MinifiedFilter = " << config["MinifiedFilter"] << "\n\n";
+
+    file << "; MagnifiedFilter sets the texture filtering mode when a texture is scaled up:\n";
+    file << "; Default - Doesn't override filter\n";
+    file << "; Nearest - Uses nearest-neighbor filtering (can look pixelated)\n";
+    file << "; Linear  - Uses bilinear filtering (smooths textures, but causes minimal texture bleeding)\n";
+    file << "MagnifiedFilter = " << config["MagnifiedFilter"] << "\n\n";
+
+    file << "; ForceHandleTransparency determines if OpenGL handles transparency in textures:\n";
+    file << "; True  - Transparency is handled automatically\n";
+    file << "; False - Transparency is not handled, game handles it normally\n";
+    file << "ForceHandleTransparency = " << config["ForceHandleTransparency"] << "\n\n";
+
+    file << "; DisableMultisample controls whether multisampling (anti-aliasing) is disabled:\n";
+    file << "; True  - Multisampling is disabled (performance gain, but edges may appear jagged)\n";
+    file << "; False - Multisampling is enabled (smoother edges, but may affect performance)\n";
+    file << "DisableMultisample = " << config["DisableMultisample"] << "\n";
+}
+
+void ReadConfig() {
+    std::ifstream file("opengl32.ini");
+    if (!file) {
+        WriteConfig();
+        return;
+    }
+    std::string line;
+    while (std::getline(file, line)) {
+        if (line.empty() || line[0] == ';' || line[0] == '[') continue;
+        size_t delimiter = line.find("=");
+        if (delimiter != std::string::npos) {
+            std::string key = line.substr(0, delimiter);
+            std::string value = line.substr(delimiter + 1);
+            key.erase(0, key.find_first_not_of(" "));
+            key.erase(key.find_last_not_of(" ") + 1);
+            value.erase(0, value.find_first_not_of(" "));
+            value.erase(value.find_last_not_of(" ") + 1);
+            if (config.find(key) != config.end()) {
+                config[key] = value;
+            }
+        }
+    }
+}
+
+// ========================================================
 // DllMain:
 //  Note: Threads are not supported.
 //  Probably a non issue, since OpenGL is single-threaded.
@@ -416,6 +501,7 @@ BOOL WINAPI DllMain(HINSTANCE /* hInstDll */, DWORD reasonForDllLoad, LPVOID /* 
     switch (reasonForDllLoad)
     {
     case DLL_PROCESS_ATTACH :
+        ReadConfig();
         GLPROXY_LOG("\nDllMain: DLL_PROCESS_ATTACH\n");
         break;
 
@@ -877,7 +963,6 @@ GLFUNC_2(glClipPlane, GLenum, plane, const GLdouble *, equation);
 GLFUNC_3(glColor3b, GLbyte, red, GLbyte, green, GLbyte, blue);
 GLFUNC_2(glColorMaterial, GLenum, face, GLenum, mode);
 GLFUNC_2(glDeleteLists, GLuint, list, GLsizei, range);
-GLFUNC_2(glDeleteTextures, GLsizei, n, const GLuint *, textures);
 GLFUNC_2(glDepthRange, GLclampd, zNear, GLclampd, zFar);
 GLFUNC_2(glEdgeFlagPointer, GLsizei, stride, const void *, pointer);
 GLFUNC_2(glEvalCoord2d, GLdouble, u, GLdouble, v);
@@ -1062,8 +1147,117 @@ GLFUNC_7(glTexSubImage1D, GLenum, target, GLint, level, GLint, xoffset, GLsizei,
 GLFUNC_8(glCopyTexImage2D, GLenum, target, GLint, level, GLenum, internalFormat, GLint, x, GLint, y, GLsizei, width, GLsizei, height, GLint, border);
 GLFUNC_8(glCopyTexSubImage2D, GLenum, target, GLint, level, GLint, xoffset, GLint, yoffset, GLint, x, GLint, y, GLsizei, width, GLsizei, height);
 GLFUNC_8(glTexImage1D, GLenum, target, GLint, level, GLint, internalformat, GLsizei, width, GLint, border, GLenum, format, GLenum, type, const void *, pixels);
-GLFUNC_9(glTexImage2D, GLenum, target, GLint, level, GLint, internalformat, GLsizei, width, GLsizei, height, GLint, border, GLenum, format, GLenum, type, const void *, pixels);
 GLFUNC_9(glTexSubImage2D, GLenum, target, GLint, level, GLint, xoffset, GLint, yoffset, GLsizei, width, GLsizei, height, GLenum, format, GLenum, type, const void *, pixels);
 GLFUNC_10(glMap2d, GLenum, target, GLdouble, u1, GLdouble, u2, GLint, ustride, GLint, uorder, GLdouble, v1, GLdouble, v2, GLint, vstride, GLint, vorder, const GLdouble *, points);
 GLFUNC_10(glMap2f, GLenum, target, GLfloat, u1, GLfloat, u2, GLint, ustride, GLint, uorder, GLfloat, v1, GLfloat, v2, GLint, vstride, GLint, vorder, const GLfloat *, points);
 
+//Get Image Name
+std::string computeImageHash(const void* pixels, size_t size) {
+    return md5(std::string(static_cast<const char*>(pixels), size));
+}
+
+//Checks if file exists
+bool fileExists(const std::string& name) {
+    std::ifstream file(name);
+    return file.good();
+}
+
+//OpenGL Constants
+#define GL_BLEND 0x0BE2
+#define GL_SRC_ALPHA 0x0302
+#define GL_ONE_MINUS_SRC_ALPHA 0x0303
+#define GL_TEXTURE_2D 0x0DE1
+#define GL_TEXTURE_MIN_FILTER 0x2801
+#define GL_TEXTURE_MAG_FILTER 0x2800
+#define GL_LINEAR 0x2601
+#define GL_MULTISAMPLE 0x809D
+#define GL_TEXTURE_BINDING_2D 0x8069
+#define GL_RGBA8 0x8058
+#define GL_RGBA 0x1908
+#define GL_NEAREST 0x2600
+
+//Keep track of already hashed textures to reduce load times
+static std::unordered_map<GLint, std::string> texIdToHashMap;
+
+GLPROXY_EXTERN void GLPROXY_DECL glTexImage2D(
+    GLenum target,
+    GLint level,
+    GLint internalformat,
+    GLsizei width,
+    GLsizei height,
+    GLint border,
+    GLenum format,
+    GLenum type,
+    const void* pixels)
+{
+    static GLProxy::TGLFunc<void, GLenum, GLint, GLint, GLsizei, GLsizei, GLint, GLenum, GLenum, const void*> TGLFUNC_DECL(glTexImage2D);
+
+    if (config["ForceHandleTransparency"] == "True") {
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    }
+    if (config["MinifiedFilter"] == "Linear")
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    else if (config["MinifiedFilter"] == "Nearest")
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    if (config["MagnifiedFilter"] == "Linear")
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    else if (config["MagnifiedFilter"] == "Nearest")
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    else if (config["DisableMultisample"] == "True")
+        glDisable(GL_MULTISAMPLE);
+
+    if (config["DumpTextures"] == "All" || config["DumpTextures"] == "New" || config["OverrideTextures"] == "True") {
+        GLint texId;
+        glGetIntegerv(GL_TEXTURE_BINDING_2D, &texId);
+
+        std::string hash;
+        auto it = texIdToHashMap.find(texId);
+        if (it != texIdToHashMap.end()) {
+            GLPROXY_LOG("Used TexIdToHashMap");
+            hash = it->second;
+        }
+        else if (pixels) {
+            GLPROXY_LOG("computeImageHash");
+            hash = computeImageHash(pixels, width * height * 4);
+            texIdToHashMap[texId] = hash;
+        }
+
+        if (!hash.empty() && pixels) {
+            std::string dumpName = "TexDumps/" + hash + ".png";
+            std::string overrideName = "TexOverrides/" + hash + ".png";
+
+            if (config["DumpTextures"] == "All" || (config["DumpTextures"] == "New" && !fileExists(overrideName)))
+                if (!fileExists(dumpName))
+                    if (!stbi_write_png(dumpName.c_str(), width, height, 4, pixels, width * 4))
+                        GLPROXY_LOG("Error saving texture: " << dumpName);
+
+            if (fileExists(overrideName)) {
+                int imgWidth, imgHeight, imgChannels;
+                unsigned char* imgData = stbi_load(overrideName.c_str(), &imgWidth, &imgHeight, &imgChannels, 4);
+                if (imgData) {
+                    TGLFUNC_CALL(glTexImage2D, target, level, GL_RGBA8, imgWidth, imgHeight, border, GL_RGBA, type, imgData);
+                    stbi_image_free(imgData);
+                    return;
+                }
+                else GLPROXY_LOG("Error loading texture: " << overrideName);
+            }
+        }
+    }
+
+    TGLFUNC_CALL(glTexImage2D, target, level, internalformat, width, height, border, format, type, pixels);
+}
+
+GLPROXY_EXTERN void GLPROXY_DECL glDeleteTextures(GLsizei n, const GLuint* textures)
+{
+    static GLProxy::TGLFunc<void, GLsizei, const GLuint*> TGLFUNC_DECL(glDeleteTextures);
+
+    for (GLsizei i = 0; i < n; ++i) {
+        GLint texId = textures[i];
+        auto it = texIdToHashMap.find(texId);
+        if (it != texIdToHashMap.end())
+            texIdToHashMap.erase(it);
+    }
+
+    TGLFUNC_CALL(glDeleteTextures, n, textures);
+}
